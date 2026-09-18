@@ -18,7 +18,7 @@ db.executescript("""
 CREATE TABLE IF NOT EXISTS members(chat_id INTEGER, user_id INTEGER, name TEXT,
   score INTEGER DEFAULT 0, streak INTEGER DEFAULT 0, PRIMARY KEY(chat_id,user_id));
 CREATE TABLE IF NOT EXISTS reports(chat_id INTEGER, user_id INTEGER, day TEXT,
-  push INTEGER, plank INTEGER, jack INTEGER, PRIMARY KEY(chat_id,user_id,day));
+  push INTEGER, plank INTEGER, jack INTEGER, pts INTEGER DEFAULT 0, PRIMARY KEY(chat_id,user_id,day));
 """)
 
 def today(): return dt.datetime.now(TZ).date().isoformat()
@@ -49,11 +49,17 @@ async def done(u: Update, c: ContextTypes.DEFAULT_TYPE):
         return await u.message.reply_text("Format: /done <pushups> <plank seconds> <jacks>")
     cid, uid, name = u.effective_chat.id, u.effective_user.id, u.effective_user.first_name
     db.execute("INSERT OR IGNORE INTO members(chat_id,user_id,name) VALUES(?,?,?)", (cid, uid, name))
-    db.execute("INSERT OR REPLACE INTO reports VALUES(?,?,?,?,?,?)", (cid, uid, today(), p, s, j)); db.commit()
-    if p >= MIN_PUSH and s >= MIN_PLANK and j >= MIN_JACK:
-        await u.message.reply_text(f"🦸 Hero! Logged {p}/{s}s/{j}. Bonus today: +{bonus(p,s,j)} (points added at day close).")
+    passed = p >= MIN_PUSH and s >= MIN_PLANK and j >= MIN_JACK
+    new_pts = BASE + bonus(p, s, j) if passed else 0
+    old = db.execute("SELECT pts FROM reports WHERE chat_id=? AND user_id=? AND day=?", (cid, uid, today())).fetchone()
+    old_pts = old[0] if old else 0
+    db.execute("INSERT OR REPLACE INTO reports VALUES(?,?,?,?,?,?,?)", (cid, uid, today(), p, s, j, new_pts))
+    db.execute("UPDATE members SET score=score+? WHERE chat_id=? AND user_id=?", (new_pts - old_pts, cid, uid)); db.commit()
+    total = db.execute("SELECT score FROM members WHERE chat_id=? AND user_id=?", (cid, uid)).fetchone()[0]
+    if passed:
+        await u.message.reply_text(f"🦸 Hero! Logged {p}/{s}s/{j} → +{new_pts} pts. Total: {total}")
     else:
-        await u.message.reply_text("Logged, but that's below the minimum — you can resend /done before midnight.")
+        await u.message.reply_text(f"Logged {p}/{s}s/{j}, but that's below the minimum (0 pts) — resend /done before midnight.")
 
 async def me(u: Update, c: ContextTypes.DEFAULT_TYPE):
     r = db.execute("SELECT score,streak FROM members WHERE chat_id=? AND user_id=?",
@@ -80,8 +86,8 @@ async def close_day(c: ContextTypes.DEFAULT_TYPE):
             r = db.execute("SELECT push,plank,jack FROM reports WHERE chat_id=? AND user_id=? AND day=?", (cid, uid, day)).fetchone()
             if r and r[0] >= MIN_PUSH and r[1] >= MIN_PLANK and r[2] >= MIN_JACK:
                 streak += 1
-                pts = BASE + bonus(*r) + min(streak * STREAK_BONUS, STREAK_CAP)
-                heroes.append(f"{name} +{pts}")
+                pts = min(streak * STREAK_BONUS, STREAK_CAP)
+                heroes.append(f"{name} (streak +{pts})")
             elif r:
                 streak, pts = 0, 0
                 day_losers.append(name)
