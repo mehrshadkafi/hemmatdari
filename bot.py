@@ -7,7 +7,7 @@ TOKEN = os.environ["BOT_TOKEN"]
 TZ = ZoneInfo("Asia/Tehran")
 DB_PATH = os.environ.get("DB_PATH", "bot.db")
 
-MIN_PUSH, MIN_PLANK, MIN_JACK = 10, 60, 100
+MIN_PUSH, MIN_PLANK, MIN_JACK = 5, 30, 50
 BASE = 100          # hero score for hitting the minimum
 BONUS_CAP = 50      # max extra points per day
 MISS_PENALTY = -10  # didn't report at all
@@ -60,9 +60,8 @@ async def done(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await u.message.reply_text(f"🦸 Hero! Logged {p}/{s}s/{j} → +{new_pts} pts. Total: {total}")
     else:
         await u.message.reply_text(
-            f"😱 YOU ARE A LOSER, SHAME ON YOU! {p}/{s}s/{j} is below the minimum.\n"
-            "But you can fix it my friend — just do it please, the leaderboard wants your shiny name! ✨\n"
-            "Resend /done before midnight and you're a hero.")
+            f"😱 LOSER! {p}/{s}s/{j} is below the minimum. SHAME!\n"
+            "But you can fix it — the leaderboard wants your shiny name ✨ Resend /done before midnight 💪")
 
 async def me(u: Update, c: ContextTypes.DEFAULT_TYPE):
     r = db.execute("SELECT score,streak FROM members WHERE chat_id=? AND user_id=?",
@@ -84,9 +83,8 @@ async def leaderboard(u: Update, c: ContextTypes.DEFAULT_TYPE):
         if uid not in passed_today: slackers.append(n)
     msg = "🏆 Leaderboard (🦸 done today · 💀 not yet)\n" + "\n".join(lines)
     if slackers:
-        msg += ("\n\n😱 " + ", ".join(slackers) + " — SHAME ON YOU, LOSERS!\n"
-                "But you can fix it my friends — just do it please, the leaderboard wants your shiny names! ✨\n"
-                f"{MIN_PUSH} pushups · {MIN_PLANK}s plank · {MIN_JACK} jacks, then /done. Go! 💪")
+        msg += ("\n\n😱 " + ", ".join(slackers) + " — SHAME! LOSERS!\n"
+                "But you can fix it — the leaderboard wants your shiny names ✨ Do it and /done 💪")
     else:
         msg += "\n\n🔥 Everyone is a hero today. Legends."
     await u.message.reply_text(msg)
