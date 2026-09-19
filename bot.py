@@ -1,7 +1,7 @@
 import os, sqlite3, datetime as dt
 from zoneinfo import ZoneInfo
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 TOKEN = os.environ["BOT_TOKEN"]
 TZ = ZoneInfo("Asia/Tehran")
@@ -59,7 +59,10 @@ async def done(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if passed:
         await u.message.reply_text(f"🦸 Hero! Logged {p}/{s}s/{j} → +{new_pts} pts. Total: {total}")
     else:
-        await u.message.reply_text(f"Logged {p}/{s}s/{j}, but that's below the minimum (0 pts) — resend /done before midnight.")
+        await u.message.reply_text(
+            f"😱 YOU ARE A LOSER, SHAME ON YOU! {p}/{s}s/{j} is below the minimum.\n"
+            "But you can fix it my friend — just do it please, the leaderboard wants your shiny name! ✨\n"
+            "Resend /done before midnight and you're a hero.")
 
 async def me(u: Update, c: ContextTypes.DEFAULT_TYPE):
     r = db.execute("SELECT score,streak FROM members WHERE chat_id=? AND user_id=?",
@@ -67,12 +70,26 @@ async def me(u: Update, c: ContextTypes.DEFAULT_TYPE):
     await u.message.reply_text(f"Score: {r[0]} · Streak: {r[1]} days" if r else "Send /start first.")
 
 async def leaderboard(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    rows = db.execute("SELECT name,score,streak FROM members WHERE chat_id=? ORDER BY score DESC",
-                      (u.effective_chat.id,)).fetchall()
-    if not rows: return await u.message.reply_text("Nobody has joined yet. Send /start.")
+    if not db.execute("SELECT 1 FROM members WHERE chat_id=?", (u.effective_chat.id,)).fetchone():
+        return await u.message.reply_text("Nobody has joined yet. Send /start.")
     medals = ["🥇", "🥈", "🥉"]
-    lines = [f"{medals[i] if i < 3 else f'{i+1}.'} {n} — {sc} pts (🔥{st})" for i, (n, sc, st) in enumerate(rows)]
-    await u.message.reply_text("🏆 Leaderboard\n" + "\n".join(lines))
+    passed_today = {uid for (uid,) in db.execute(
+        "SELECT user_id FROM reports WHERE chat_id=? AND day=? AND pts>0", (u.effective_chat.id, today()))}
+    rows = db.execute("SELECT user_id,name,score,streak FROM members WHERE chat_id=? ORDER BY score DESC",
+                      (u.effective_chat.id,)).fetchall()
+    lines, slackers = [], []
+    for i, (uid, n, sc, st) in enumerate(rows):
+        mark = "🦸" if uid in passed_today else "💀"
+        lines.append(f"{medals[i] if i < 3 else f'{i+1}.'} {mark} {n} — {sc} pts (🔥{st})")
+        if uid not in passed_today: slackers.append(n)
+    msg = "🏆 Leaderboard (🦸 done today · 💀 not yet)\n" + "\n".join(lines)
+    if slackers:
+        msg += ("\n\n😱 " + ", ".join(slackers) + " — SHAME ON YOU, LOSERS!\n"
+                "But you can fix it my friends — just do it please, the leaderboard wants your shiny names! ✨\n"
+                f"{MIN_PUSH} pushups · {MIN_PLANK}s plank · {MIN_JACK} jacks, then /done. Go! 💪")
+    else:
+        msg += "\n\n🔥 Everyone is a hero today. Legends."
+    await u.message.reply_text(msg)
 
 async def morning(c: ContextTypes.DEFAULT_TYPE):
     for (cid,) in db.execute("SELECT DISTINCT chat_id FROM members"):
@@ -102,9 +119,15 @@ async def close_day(c: ContextTypes.DEFAULT_TYPE):
         msg += "💀 Losers (no report): " + (", ".join(losers) or "none")
         await c.bot.send_message(cid, msg)
 
+async def register_any(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if u.effective_user and not u.effective_user.is_bot:
+        db.execute("INSERT OR IGNORE INTO members(chat_id,user_id,name) VALUES(?,?,?)",
+                   (u.effective_chat.id, u.effective_user.id, u.effective_user.first_name)); db.commit()
+
 app = Application.builder().token(TOKEN).build()
 for cmd, fn in [("start", start), ("rules", rules), ("done", done), ("me", me), ("leaderboard", leaderboard)]:
     app.add_handler(CommandHandler(cmd, fn))
+app.add_handler(MessageHandler(filters.ALL, register_any), group=1)
 app.job_queue.run_daily(morning, dt.time(7, 0, tzinfo=TZ))
 app.job_queue.run_daily(close_day, dt.time(23, 59, tzinfo=TZ))
 app.run_polling()
